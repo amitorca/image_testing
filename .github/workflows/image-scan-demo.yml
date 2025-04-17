@@ -7,8 +7,8 @@ on:
   workflow_dispatch:  # allows manual run from GitHub UI
 
 jobs:
-  build-cli:
-    name: build-cli
+  orca_security_image_scan:
+    name: Orca Security Image Scan
     runs-on: ubuntu-latest
     env: 
       IMAGE_NAME: postgres:latest
