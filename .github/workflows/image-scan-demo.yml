@@ -33,6 +33,57 @@ jobs:
         curl -sfL 'https://raw.GitHubusercontent.com/orcasecurity/orca-cli/main/install.sh' | bash
         orca-cli -p "${PROJECT_KEY}" image scan ${IMAGE_NAME} --output orca-scan-summary.json --format json
 
+    - name: Create MVP Annotation File from Orca Summary
+      id: transform_results_mvp
+      if: always() # Run even if the scan step failed based on exit code
+      uses: actions/github-script@v7
+      with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            const annotations = [];
+            let scanResults;
+
+            try {
+              scanResults = JSON.parse(fs.readFileSync('orca-scan-summary.json', 'utf8'));
+            } catch (error) {
+              console.error("Failed to read or parse orca-scan-summary.json:", error);
+              core.setOutput('annotations_created', 'false');
+              return; // Stop script execution
+            }
+
+            const vulns = scanResults.vulnerabilities_count || {};
+            const policies = scanResults.policies_summary || [];
+            const failedPolicies = policies.some(p => p.failed === true);
+            const hasCriticalHighVulns = (vulns.critical > 0 || vulns.high > 0);
+
+            // Create ONE annotation if critical/high vulns OR failed policies exist
+            if (hasCriticalHighVulns || failedPolicies) {
+              annotations.push({
+                path: 'Dockerfile', // Point to Dockerfile as a relevant place
+                start_line: 1,
+                end_line: 1,
+                annotation_level: 'failure', // Use 'failure' for high impact issues
+                title: 'Orca Scan Alert: Critical/High Vulnerabilities or Policy Failures Found',
+                message: `Scan detected critical/high vulnerabilities or failed policies. Check Orca results for details: ${scanResults.results_url || '(URL not found)'}`
+              });
+              console.log('High impact issues found. Creating annotation file.');
+            } else {
+              console.log('No critical/high vulnerabilities or failed policies found.');
+            }
+
+            // Write the annotations file (will be empty if no issues)
+            fs.writeFileSync('annotations.json', JSON.stringify(annotations));
+            core.setOutput('annotations_created', annotations.length > 0 ? 'true' : 'false');
+
+    - name: Add MVP Scan Annotation
+      if: always() && steps.transform_results_mvp.outputs.annotations_created == 'true' # Run only if annotation file has content
+      uses: yuzutech/annotations-action@v0.4.0 # Check for latest version
+      with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          title: 'Orca Security Scan (MVP)' # Title for the Check run
+          input: './annotations.json'
+
     - name: Comment on PR with Orca Scan Summary
       if: always() && github.event_name == 'pull_request'
       uses: actions/github-script@v7
