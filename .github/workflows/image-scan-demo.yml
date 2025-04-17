@@ -33,12 +33,13 @@ jobs:
         curl -sfL 'https://raw.GitHubusercontent.com/orcasecurity/orca-cli/main/install.sh' | bash
         orca-cli -p "${PROJECT_KEY}" image scan ${IMAGE_NAME} --output orca-scan-summary.json --format json
 
-    - name: Create MVP Annotation File from Orca Summary
-      id: transform_results_mvp
+      # *** New Step: Transform Orca results to Annotations JSON ***
+    - name: Create Annotations File from Orca Scan
+      id: transform_results
       if: always() # Run even if the scan step failed based on exit code
       uses: actions/github-script@v7
       with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+          github-token: ${{ secrets.GITHUB_TOKEN }} # Use default token
           script: |
             const fs = require('fs');
             const annotations = [];
@@ -48,41 +49,92 @@ jobs:
               scanResults = JSON.parse(fs.readFileSync('orca-scan-summary.json', 'utf8'));
             } catch (error) {
               console.error("Failed to read or parse orca-scan-summary.json:", error);
-              core.setOutput('annotations_created', 'false');
+              // Create a single annotation indicating the failure
+              annotations.push({
+                path: '.github/workflows/image-scan-demo.yml', // Point to the workflow file
+                start_line: 1,
+                end_line: 1,
+                annotation_level: 'failure',
+                title: 'Orca Scan Processing Error',
+                message: 'Could not read or parse orca-scan-summary.json. Check scan step output.'
+              });
+              fs.writeFileSync('annotations.json', JSON.stringify(annotations));
+              core.setOutput('annotations_created', 'true');
               return; // Stop script execution
             }
 
-            const vulns = scanResults.vulnerabilities_count || {};
-            const policies = scanResults.policies_summary || [];
-            const failedPolicies = policies.some(p => p.failed === true);
-            const hasCriticalHighVulns = (vulns.critical > 0 || vulns.high > 0);
-
-            // Create ONE annotation if critical/high vulns OR failed policies exist
-            if (hasCriticalHighVulns || failedPolicies) {
-              annotations.push({
-                path: 'Dockerfile', // Point to Dockerfile as a relevant place
-                start_line: 1,
-                end_line: 1,
-                annotation_level: 'failure', // Use 'failure' for high impact issues
-                title: 'Orca Scan Alert: Critical/High Vulnerabilities or Policy Failures Found',
-                message: `Scan detected critical/high vulnerabilities or failed policies. Check Orca results for details: ${scanResults.results_url || '(URL not found)'}`
-              });
-              console.log('High impact issues found. Creating annotation file.');
-            } else {
-              console.log('No critical/high vulnerabilities or failed policies found.');
+            // --- Helper function to map Orca severity to GitHub annotation level ---
+            function mapSeverity(orcaSeverity) {
+              switch (orcaSeverity?.toLowerCase()) {
+                case 'critical':
+                case 'high':
+                  return 'failure';
+                case 'medium':
+                case 'low': // Treat low as warning for visibility
+                  return 'warning';
+                default:
+                  return 'notice'; // For unknown or informational
+              }
             }
 
-            // Write the annotations file (will be empty if no issues)
-            fs.writeFileSync('annotations.json', JSON.stringify(annotations));
-            core.setOutput('annotations_created', annotations.length > 0 ? 'true' : 'false');
+            // --- Process Vulnerabilities ---
+            // Note: Orca JSON doesn't directly map vulnerabilities to file paths/lines easily.
+            // This example creates general annotations per vulnerability type.
+            if (scanResults.vulnerabilities) {
+              scanResults.vulnerabilities.forEach(vulnCategory => {
+                 if (vulnCategory.results && Array.isArray(vulnCategory.results)) {
+                    vulnCategory.results.forEach(vuln => {
+                      annotations.push({
+                        // Path often not applicable directly, could point to Dockerfile or remain general
+                        path: 'Dockerfile', // Or a relevant config file, or omit if not applicable
+                        start_line: 1, // Placeholder line
+                        end_line: 1,   // Placeholder line
+                        annotation_level: mapSeverity(vuln.severity),
+                        title: `Vulnerability: ${vuln.vulnerability_id || 'N/A'} (${vuln.pkg_name || 'N/A'})`,
+                        message: `Severity: ${vuln.severity || 'Unknown'}. Package: ${vuln.pkg_name}@${vuln.installed_version || 'N/A'}. Fixed in: ${vuln.fixed_version || 'Not available'}. Type: ${vulnCategory.type || 'N/A'}`
+                      });
+                    });
+                 }
+              });
+            }
 
-    - name: Add MVP Scan Annotation
-      if: always() && steps.transform_results_mvp.outputs.annotations_created == 'true' # Run only if annotation file has content
+            // --- Process Best Practice Findings ---
+            if (scanResults.results && Array.isArray(scanResults.results)) {
+               scanResults.results.forEach(category => {
+                  if (category.id === 'container_image_best_practices' && category.results && Array.isArray(category.results)) {
+                     category.results.forEach(finding => {
+                       annotations.push({
+                         path: 'Dockerfile', // Best practices often relate to the Dockerfile
+                         start_line: 1, // Placeholder - real line number might require Dockerfile parsing
+                         end_line: 1,   // Placeholder
+                         annotation_level: mapSeverity(finding.priority), // Map Orca priority
+                         title: `Best Practice: ${finding.control?.title || 'N/A'}`,
+                         message: `Status: ${finding.status}. Finding: ${finding.findings?.[0] || 'Details unavailable'}. Recommendation: ${finding.control?.recommendation || 'N/A'}`
+                       });
+                     });
+                  }
+               });
+            }
+
+            // --- Write the annotations file ---
+            if (annotations.length > 0) {
+              fs.writeFileSync('annotations.json', JSON.stringify(annotations));
+              core.setOutput('annotations_created', 'true');
+              console.log(`Created annotations.json with ${annotations.length} annotations.`);
+            } else {
+              console.log('No specific findings to create annotations for.');
+              core.setOutput('annotations_created', 'false');
+            }
+
+      # *** New Step: Add Annotations using the created file ***
+    - name: Add Scan Annotations
+      if: always() && steps.transform_results.outputs.annotations_created == 'true' # Run if annotations file was created
       uses: yuzutech/annotations-action@v0.4.0 # Check for latest version
       with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
-          title: 'Orca Security Scan (MVP)' # Title for the Check run
+          title: 'Orca Security Scan Findings' # Title for the Check run
           input: './annotations.json'
+
 
     - name: Comment on PR with Orca Scan Summary
       if: always() && github.event_name == 'pull_request'
