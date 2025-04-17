@@ -33,7 +33,7 @@ jobs:
         curl -sfL 'https://raw.GitHubusercontent.com/orcasecurity/orca-cli/main/install.sh' | bash
         orca-cli -p "${PROJECT_KEY}" image scan ${IMAGE_NAME} --output orca-scan-summary.json --format json
 
-      # *** New Step: Transform Orca results to Annotations JSON ***
+     # *** New Step: Transform Orca results to Annotations JSON ***
     - name: Create Annotations File from Orca Scan
       id: transform_results
       if: always() # Run even if the scan step failed based on exit code
@@ -51,7 +51,7 @@ jobs:
               console.error("Failed to read or parse orca-scan-summary.json:", error);
               // Create a single annotation indicating the failure
               annotations.push({
-                path: '.github/workflows/image-scan-demo (1).yml', // Corrected workflow file name if needed
+                path: '.github/workflows/image-scan-demo (2).yml', // Match your workflow file name
                 start_line: 1,
                 end_line: 1,
                 annotation_level: 'failure',
@@ -129,35 +129,7 @@ jobs:
               console.log('No specific findings matched criteria to create annotations for.');
               core.setOutput('annotations_created', 'false');
             }
-            }
-
-            // --- Process Best Practice Findings ---
-            if (scanResults.results && Array.isArray(scanResults.results)) {
-               scanResults.results.forEach(category => {
-                  if (category.id === 'container_image_best_practices' && category.results && Array.isArray(category.results)) {
-                     category.results.forEach(finding => {
-                       annotations.push({
-                         path: 'Dockerfile', // Best practices often relate to the Dockerfile
-                         start_line: 1, // Placeholder - real line number might require Dockerfile parsing
-                         end_line: 1,   // Placeholder
-                         annotation_level: mapSeverity(finding.priority), // Map Orca priority
-                         title: `Best Practice: ${finding.control?.title || 'N/A'}`,
-                         message: `Status: ${finding.status}. Finding: ${finding.findings?.[0] || 'Details unavailable'}. Recommendation: ${finding.control?.recommendation || 'N/A'}`
-                       });
-                     });
-                  }
-               });
-            }
-
-            // --- Write the annotations file ---
-            if (annotations.length > 0) {
-              fs.writeFileSync('annotations.json', JSON.stringify(annotations));
-              core.setOutput('annotations_created', 'true');
-              console.log(`Created annotations.json with ${annotations.length} annotations.`);
-            } else {
-              console.log('No specific findings to create annotations for.');
-              core.setOutput('annotations_created', 'false');
-            }
+            // ** Ensure no duplicated code blocks exist below this line within the script: block **
 
       # *** New Step: Add Annotations using the created file ***
     - name: Add Scan Annotations
