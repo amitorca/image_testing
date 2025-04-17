@@ -149,51 +149,99 @@ jobs:
         script: |
           const fs = require('fs');
           const scan = JSON.parse(fs.readFileSync('orca-scan-summary.json', 'utf8'));
-    
-          const controls = scan.controls_count;
-          const vulns = scan.vulnerabilities_count;
-          const policies = scan.policies_summary;
-    
-          const failedPolicies = policies
+          const MAX_ITEMS_TO_LIST = 5; // Max vulnerabilities/controls to list directly
+
+          const controls = scan.controls_count || { passed: 0, warning: 0, failed: 0 };
+          const vulns = scan.vulnerabilities_count || { critical: 0, high: 0, medium: 0, low: 0, unknown: 0 };
+          const policies = scan.policies_summary || [];
+          const resultsUrl = scan.results_url || '#'; // Default URL if not found
+
+          // --- Extract Top Critical/High Vulnerabilities ---
+          let topVulns = [];
+          if (scan.vulnerabilities && Array.isArray(scan.vulnerabilities)) {
+            scan.vulnerabilities.forEach(cat => {
+              if (cat.vulnerabilities && Array.isArray(cat.vulnerabilities)) {
+                topVulns.push(...cat.vulnerabilities);
+              }
+            });
+          }
+          // Sort by severity (crit -> high -> med -> low -> unknown) then filter top N
+          const severityOrder = { critical: 5, high: 4, medium: 3, low: 2, unknown: 1 };
+          topVulns.sort((a, b) => (severityOrder[b.severity?.toLowerCase()] || 0) - (severityOrder[a.severity?.toLowerCase()] || 0));
+          topVulns = topVulns
+            .filter(v => v.severity?.toLowerCase() === 'critical' || v.severity?.toLowerCase() === 'high')
+            .slice(0, MAX_ITEMS_TO_LIST);
+
+          let topVulnsList = 'None found.';
+          if (topVulns.length > 0) {
+             topVulnsList = `| Severity | Package | Version | Fixed In | ID |\n`;
+             topVulnsList += `|---|---|---|---|---|\n`;
+             topVulnsList += topVulns.map(v =>
+               `| ${v.severity || 'N/A'} | ${v.pkg_name || 'N/A'} | ${v.installed_version || 'N/A'} | ${v.fixed_version || 'N/A'} | ${v.vulnerability_id || 'N/A'} |`
+             ).join('\n');
+             if (vulns.critical + vulns.high > MAX_ITEMS_TO_LIST) {
+                 topVulnsList += `\n*... and ${vulns.critical + vulns.high - MAX_ITEMS_TO_LIST} more critical/high vulnerabilities.*`;
+             }
+          }
+
+          // --- Extract Failed Controls/Best Practices ---
+          let failedControls = [];
+          const bestPractices = scan.results?.container_image_best_practices?.results;
+          if (bestPractices && Array.isArray(bestPractices)) {
+             failedControls = bestPractices
+                .filter(c => c.status === 'FAILED') // Only show failed controls
+                .slice(0, MAX_ITEMS_TO_LIST);
+          }
+
+          let failedControlsList = 'None found.';
+          if (failedControls.length > 0) {
+             failedControlsList = failedControls.map(c =>
+               `- ❌ **${c.catalog_control?.title || 'Unknown Control'}** (Priority: ${c.priority || 'N/A'})\n   *Finding:* ${c.findings?.[0] || c.catalog_control?.recommendation || 'Details unavailable'}`
+             ).join('\n');
+             if (controls.failed > MAX_ITEMS_TO_LIST) {
+                 failedControlsList += `\n*... and ${controls.failed - MAX_ITEMS_TO_LIST} more failed controls.*`;
+             }
+          }
+
+          // --- Extract Failed Policies ---
+          const failedPoliciesList = policies
             .filter(p => p.failed)
             .map(p => `- ❌ **${p.policy_name}**`)
             .join('\n') || '✅ No failed policies';
-    
-          const summary = `
+
+          // --- Construct the Comment Body ---
+          const commentBody = `
           🛡️ **Orca Security Scan Summary**
-          
-          🔗 [View full results in Orca Security Console](${scan.results_url})
-          
-          **Controls**
-          - ✅ Passed: ${controls.passed}
-          - ⚠️ Warnings: ${controls.warning}
-          - ❌ Failed: ${controls.failed}
-          
-          **Vulnerabilities**
-          - 🟥 Critical: ${vulns.critical}
-          - 🟧 High: ${vulns.high}
-          - 🟨 Medium: ${vulns.medium}
-          - 🟦 Low: ${vulns.low}
-          - ❓ Unknown: ${vulns.unknown}
-          
-          **Failed Policies**
-          ${failedPolicies}
+
+          🔗 [View Full Results in Orca Security Console](${resultsUrl})
+
+          ---
+          ### Summary Counts
+          | Category | Critical | High | Medium | Low | Unknown | Failed | Warning | Passed | Total |
+          |---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+          | **Vulnerabilities** | ${vulns.critical} | ${vulns.high} | ${vulns.medium} | ${vulns.low} | ${vulns.unknown} | - | - | - | **${vulns.total || 0}** |
+          | **Controls** | - | - | - | - | - | ${controls.failed} | ${controls.warning} | ${controls.passed} | **${controls.total || 0}** |
+
+          ---
+          ### Top Critical/High Vulnerabilities (Max ${MAX_ITEMS_TO_LIST})
+          ${topVulnsList}
+
+          ---
+          ### Failed Controls (Max ${MAX_ITEMS_TO_LIST})
+          ${failedControlsList}
+
+          ---
+          ### Failed Policies
+          ${failedPoliciesList}
+
+          ---
+          **Action Required:** Please review the findings, especially critical/high vulnerabilities and failed controls/policies. Address them or consult with the security team before merging. Use the full results link above for complete details.
           `;
-    
-          github.rest.issues.createComment({
-            issue_number: context.issue.number,
+
+          // --- Create the Comment ---
+          await github.rest.issues.createComment({
             owner: context.repo.owner,
             repo: context.repo.repo,
-            body: summary
+            issue_number: context.issue.number,
+            body: commentBody
           });
-
-
-
-
-
-
-
-
-
-
-  
