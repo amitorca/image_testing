@@ -12,7 +12,7 @@ jobs:
     runs-on: ubuntu-latest
     env: 
       IMAGE_NAME: postgres:latest
-      PROJECT_KEY: default # Set the desired project to run the cli scanning with
+      PROJECT_KEY: image-ardy # Set the desired project to run the cli scanning with
     
     steps:
     # checks-out your repository under $GitHub_WORKSPACE, so your workflow can access it.
