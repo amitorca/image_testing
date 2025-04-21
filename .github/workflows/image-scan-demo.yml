@@ -11,8 +11,8 @@ jobs:
     name: Orca Security Image Scan
     runs-on: ubuntu-latest
     env: 
-      IMAGE_NAME: postgres:latest
-      PROJECT_KEY: image-ardy # Set the desired project to run the cli scanning with
+      IMAGE_NAME: nginx:latest
+      PROJECT_KEY: default # Set the desired project to run the cli scanning with
     
     steps:
     # checks-out your repository under $GitHub_WORKSPACE, so your workflow can access it.
@@ -21,7 +21,7 @@ jobs:
 
     # Build your docker image, that is going to be scanned in the next step
     - name: Docker Image Build
-      run: docker build -t postgres:latest .
+      run: docker build -t nginx:latest .
   
     # Run Orca CLI against the previously created container image
     - name: Orca CLI - Security Scanning
